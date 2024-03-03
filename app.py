@@ -1,15 +1,43 @@
 import sys
+import subprocess
 import sqlite3
-import pyperclip
+
 from PyQt5.Qt import *
 
+DATABASE_NAME = "app.db"
 
-class Passwords(QWidget):
+
+class PasswordStorage:
+
+    @staticmethod
+    def db_connect(func):
+        def wrapper(*args, **kwargs):
+            connection = sqlite3.Connection(DATABASE_NAME)
+            cursor = connection.cursor()
+            result = func(cursor, connection, *args, **kwargs)
+            cursor.close()
+            connection.close()
+            return result
+        return wrapper
+
+    @staticmethod
+    @db_connect
+    def fetch_passwords(cursor, *args, **kwargs) -> dict:
+        cursor.execute("SELECT name, password FROM passwords")
+        db_passwords = cursor.fetchall()
+        passwords = {db_password[0]: db_password[1] for db_password in db_passwords}
+        return passwords
+
+
+class SignVault(QWidget):
+    font = QFont('Arial', 14)
+    passwords = PasswordStorage.fetch_passwords()
+    green_background = "background-color: #00FF00;"
+
     def __init__(self, parent=None):
-        super(Passwords, self).__init__(parent)
+        super(SignVault, self).__init__(parent)
 
-        self.passwords = self.get_passwords()
-        font = QFont('Calibri', 14)
+        self.setWindowTitle("Sign Vault")
 
         main_layout = QVBoxLayout()
         search_input_layout = QVBoxLayout()
@@ -19,45 +47,51 @@ class Passwords(QWidget):
         password_layout = QVBoxLayout()
         add_password_button_layout = QVBoxLayout()
 
-        self.searchInputDefinition = QLabel("Поиск")
-        self.searchInputDefinition.setFont(QFont('Calibri', 12))
+        # Design of SearchInput
+        self.searchInputDefinition = QLabel("Search")
+        self.searchInputDefinition.setFont(self.font)
         self.searchInput = QLineEdit("")
         self.searchInput.setReadOnly(False)
         self.searchInput.returnPressed.connect(self.copy_password)
 
+        # Design of SearchDropDown
         self.searchDropDown = QComboBox()
         self.searchDropDown.addItems(self.passwords.keys())
-        self.searchDropDown.currentIndexChanged.connect(self.drop_down_change)
+        self.searchDropDown.currentIndexChanged.connect(self.copy_password_from_dropdown)
 
-        self.searchButton = QPushButton("Скопировать")
+        # Design CopyButton
+        self.searchButton = QPushButton("Copy")
         self.searchButton.clicked.connect(self.copy_password)
 
         self.searchSuccess = QLabel("")
 
-        self.searchInput.setFont(font)
-        self.searchDropDown.setFont(font)
-        self.searchButton.setFont(font)
-        self.searchSuccess.setFont(QFont('Calibri', 12))
+        # Set Fonts
+        self.searchInput.setFont(self.font)
+        self.searchDropDown.setFont(self.font)
+        self.searchButton.setFont(self.font)
+        self.searchSuccess.setFont(self.font)
 
-        self.addNameInputDefinition = QLabel("Сервис")
-        self.addNameInputDefinition.setFont(QFont('Calibri', 12))
+        # Design Add Service Layout
+        self.addNameInputDefinition = QLabel("Service")
+        self.addNameInputDefinition.setFont(self.font)
         self.addNameInput = QLineEdit("")
-        self.addNameInput.setFont(font)
+        self.addNameInput.setFont(self.font)
         self.addNameInput.setReadOnly(False)
 
-        self.addPasswordInputDefinition = QLabel("Пароль")
-        self.addPasswordInputDefinition.setFont(QFont('Calibri', 12))
+        self.addPasswordInputDefinition = QLabel("Password")
+        self.addPasswordInputDefinition.setFont(self.font)
         self.addPasswordInput = QLineEdit("")
         self.addPasswordInput.setReadOnly(False)
-        self.addPasswordInput.setFont(font)
+        self.addPasswordInput.setFont(self.font)
 
         self.addPasswordEmptyLabel = QLabel("")
-        self.addPasswordButton = QPushButton("Создать")
+        self.addPasswordButton = QPushButton("Create")
         self.addPasswordButton.clicked.connect(self.create_password)
-        self.addPasswordButton.setFont(font)
+        self.addPasswordButton.setFont(self.font)
 
+        # Design Success Message
         self.addSuccess = QLabel("")
-        self.addSuccess.setFont(QFont('Calibri', 12))
+        self.addSuccess.setFont(self.font)
 
         add_password_button_layout.addWidget(self.addPasswordEmptyLabel)
         add_password_button_layout.addWidget(self.addPasswordButton)
@@ -85,58 +119,46 @@ class Passwords(QWidget):
         main_layout.addWidget(self.addSuccess)
         self.setLayout(main_layout)
 
-        self.setWindowTitle("Vault-Warden")
-
-    def drop_down_change(self):
-        for f in self.passwords:
-            if f == self.searchDropDown.currentText():
-                self.copy_text(self.passwords[f])
-                pass
+    def copy_password_from_dropdown(self):
+        for password in self.passwords:
+            if password == self.searchDropDown.currentText():
+                self.copy_text(self.passwords[password])
+                return
 
     @pyqtSlot()
     def copy_password(self):
         for password in self.passwords:
             if self.searchInput.text().lower() in password.lower():
                 self.copy_text(self.passwords[password])
-                pass
+                return
 
     def create_password(self):
-        new_service = self.addNameInput.text()
-        new_password = self.addPasswordInput.text()
-        con = sqlite3.Connection("app.db")
-        cur = con.cursor()
-        cur.execute("""INSERT INTO passwords(name, password) VALUES("{name}", "{password}")""".format(name=new_service,
-                                                                                                      password=new_password))
-        con.commit()
-        cur.close()
-        con.close()
+        service = self.addNameInput.text()
+        password = self.addPasswordInput.text()
+        self.save_to_db(service, password)
         self.addNameInput.setText("")
         self.addPasswordInput.setText("")
-        self.addSuccess.setText("Сохранено!")
-        self.addSuccess.setStyleSheet("background-color: #00FF00;")
+        self.addSuccess.setText(" Saved!")
+        self.addSuccess.setStyleSheet(self.green_background)
+
+    @staticmethod
+    @PasswordStorage.db_connect
+    def save_to_db(cursor, connection, service, password):
+        cursor.execute(f"""INSERT INTO passwords(name, password) VALUES("{service}", "{password}")""")
+        connection.commit()
 
     def copy_text(self, text):
-        pyperclip.copy(text)
-        self.searchSuccess.setText("Скопировано!")
-        self.searchSuccess.setStyleSheet("background-color: #00FF00;")
-
-    def get_passwords(self):
-        con = sqlite3.Connection("app.db")
-        cur = con.cursor()
-        cur.execute("SELECT name, password FROM passwords")
-        passwords = cur.fetchall()
-        words = dict()
-        for password in passwords:
-            words[password[0]] = password[1]
-        cur.close()
-        con.close()
-        return words
+        subprocess.run("clip",
+                       text=True,
+                       input=text)
+        self.searchSuccess.setText(" Copied!")
+        self.searchSuccess.setStyleSheet(self.green_background)
 
 
 def main():
     app = QApplication(sys.argv)
-    ex = Passwords()
-    ex.show()
+    sign_vault = SignVault()
+    sign_vault.show()
     sys.exit(app.exec_())
 
 
